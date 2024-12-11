@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -26,7 +26,33 @@ class Message(Base):
     id = Column(Integer, primary_key=True, index=True)
     sender = Column(String(255), index=True)
     content = Column(String(1000))
+    message_type = Column(String(50))  # 'text', 'image', 'video', 'audio', 'button', 'list', 'product'
     timestamp = Column(DateTime, default=datetime.utcnow)
+
+    media = relationship("MediaMessage", back_populates="message", cascade="all, delete-orphan")
+    interactive = relationship("InteractiveMessage", back_populates="message", cascade="all, delete-orphan")
+
+class MediaMessage(Base):
+    __tablename__ = "media_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey('messages.id'))
+    media_type = Column(String(50))  # 'image', 'video', 'audio', etc.
+    media_url = Column(String(500))
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    message = relationship("Message", back_populates="media")
+
+class InteractiveMessage(Base):
+    __tablename__ = "interactive_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey('messages.id'))
+    interactive_type = Column(String(50))  # 'button', 'list', 'product'
+    content = Column(JSON)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    message = relationship("Message", back_populates="interactive")
 
 class FlowState(Base):
     __tablename__ = "flow_states"
@@ -55,4 +81,5 @@ def init_db():
 
 if __name__ == "__main__":
     init_db()
+
 
