@@ -20,10 +20,10 @@ def test_button_message():
 
     # Button message test
     logger.info("Sending button message...")
-    body = "Please select one of the following options"
-    buttons = ["Option 1", "Option 2", "Option 3"]
-    header = "Test Header"
-    footer = "Test Footer"
+    body = "elige la opcion que quieres"
+    buttons = ["Pvc", "aluminio", "aluminio-madera"]
+    header = "perfil"
+    footer = "selecciona tu preferencia"
 
     try:
         response = handler.send_button_message(test_number, body, buttons, header, footer)

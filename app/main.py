@@ -50,10 +50,11 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
 
         for message in messages:
             sender = message.get("from")
+            text = message.get("text", {}).get("body", "")
             timestamp = datetime.fromtimestamp(int(message.get("timestamp")))
 
-            # Process the message and generate a response
-            response = whatsapp_handler.process_message(db, sender, message)
+            # Generate the response
+            response = f"Has dicho: {text}"
             logger.debug(f"Generated response: {response}")
 
             # Send the response back via WhatsApp

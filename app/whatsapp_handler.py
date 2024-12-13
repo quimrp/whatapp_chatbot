@@ -22,7 +22,11 @@ class WhatsAppHandler:
 
     def _send_request(self, endpoint: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         url = f"{self.api_url}/messages/{endpoint}"
-        headers = {'Content-Type': 'application/json'}
+        headers = {
+            'Content-Type': 'application/json',
+            'User-Agent': 'WhatsAppBot/1.0',  # Custom User-Agent for serveo
+            'bypass-tunnel-reminder': 'true'  # Additional header for serveo
+        }
         payload["token"] = self.token
 
         logger.info(f"Sending {endpoint} message to {payload.get('to', 'Unknown')}")
@@ -94,6 +98,8 @@ class WhatsAppHandler:
         payload = {
             "to": int(to),
             "contact": contact_data,
+            "priority": "",
+            "message_id": ""
         }
         return self._send_request("contact", payload)
 
@@ -123,17 +129,17 @@ class WhatsAppHandler:
         return self._send_request("template", payload)
 
     def send_list_message(self, to: str, body: str, button: str, sections: List[Dict[str, Any]], 
-                          header: str = "", footer: str = "") -> Optional[Dict[str, Any]]:
+                          header: Optional[Dict[str, Any]] = None, footer: str = "") -> Optional[Dict[str, Any]]:
         payload = {
             "to": int(to),
             "body": body,
             "button": button,
             "sections": sections,
+            "footer": footer,
         }
         if header:
             payload["header"] = header
-        if footer:
-            payload["footer"] = footer
+
         return self._send_request("list", payload)
 
     def send_button_message(self, to: str, body: str, buttons: List[str], header: str = "", footer: str = "") -> Optional[Dict[str, Any]]:
@@ -253,6 +259,7 @@ class WhatsAppHandler:
         return f"Recibí tu mensaje de tipo {message_type}. Contenido: {content}"
 
 logger.info("WhatsAppHandler module loaded successfully")
+
 
 
 
