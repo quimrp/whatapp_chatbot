@@ -13,40 +13,11 @@ def update_schema():
     cursor = conn.cursor()
 
     try:
-        # Update media_messages table
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS media_messages_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_id TEXT,
-            media_id TEXT,
-            link TEXT
-        )
-        """)
-
-        # Get existing columns from media_messages table
-        cursor.execute("PRAGMA table_info(media_messages)")
-        existing_columns = [row[1] for row in cursor.fetchall()]
-
-        # Prepare columns for insertion
-        columns_to_insert = [col for col in ['id', 'message_id', 'media_id', 'link'] if col in existing_columns]
-        columns_string = ', '.join(columns_to_insert)
-
-        # Copy data from the old table to the new table (if it exists)
-        if existing_columns:
-            cursor.execute(f"""
-            INSERT OR IGNORE INTO media_messages_new ({columns_string})
-            SELECT {columns_string} FROM media_messages
-            """)
-
-
-        # Drop the old table and rename the new one
-        cursor.execute("DROP TABLE IF EXISTS media_messages")
-        cursor.execute("ALTER TABLE media_messages_new RENAME TO media_messages")
-
-        # Ensure other tables are up to date
+        # Create messages table (if not exists)
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
-            id TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            wamid TEXT UNIQUE,
             waba_id TEXT,
             phone_number_id TEXT,
             from_number TEXT,
@@ -59,11 +30,50 @@ def update_schema():
         )
         """)
 
+        # Create interactive_messages table (if not exists)
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS quoted_messages (
+        CREATE TABLE IF NOT EXISTS interactive_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            message_id TEXT,
-            quoted_data TEXT
+            message_id INTEGER,
+            interactive_type TEXT,
+            content TEXT,
+            FOREIGN KEY (message_id) REFERENCES messages(id)
+        )
+        """)
+
+        # Create multimedia_messages table (if not exists)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS multimedia_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER,
+            media_type TEXT,
+            media_id TEXT,
+            media_url TEXT,
+            FOREIGN KEY (message_id) REFERENCES messages(id)
+        )
+        """)
+
+        # Create orders table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER,
+            catalog_id TEXT,
+            status TEXT CHECK(status IN ('recibido', 'preparacion', 'enviado', 'entregado')),
+            FOREIGN KEY (message_id) REFERENCES messages(id)
+        )
+        """)
+
+        # Create order_items table
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER,
+            product_retailer_id TEXT,
+            quantity INTEGER,
+            item_price REAL,
+            currency TEXT,
+            FOREIGN KEY (order_id) REFERENCES orders(id)
         )
         """)
 
