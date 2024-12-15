@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
-from app.config import ALVOCHAT_TOKEN, ALVOCHAT_API_URL
+from app.config import settings
 from app.database import Message, MediaMessage, InteractiveMessage
 from typing import List, Dict, Any, Optional
 import urllib3
@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 class WhatsAppHandler:
     def __init__(self):
-        self.token = ALVOCHAT_TOKEN
-        self.api_url = ALVOCHAT_API_URL
+        self.token = settings.ALVOCHAT_TOKEN
+        self.api_url = settings.ALVOCHAT_API_URL
         logger.info(f"WhatsAppHandler initialized with API URL: {self.api_url}")
 
     def _send_request(self, endpoint: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -259,6 +259,8 @@ class WhatsAppHandler:
         return f"Recibí tu mensaje de tipo {message_type}. Contenido: {content}"
 
 logger.info("WhatsAppHandler module loaded successfully")
+
+
 
 
 

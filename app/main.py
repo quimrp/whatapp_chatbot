@@ -1,81 +1,92 @@
-from fastapi import FastAPI, HTTPException, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, HTTPException, Depends
 from sqlalchemy.orm import Session
-from app.database import get_db, Message
-from app.whatsapp_handler import WhatsAppHandler
-from app.config import ALVOCHAT_TOKEN, ALVOCHAT_WEBHOOK_URL
-from datetime import datetime
+from .database.models import Message, MediaMessage, QuotedMessage
+from .database.connection import get_db
+from .config import settings
 import logging
 import json
 
-app = FastAPI()
-whatsapp_handler = WhatsAppHandler()
-
-logging.basicConfig(level=logging.DEBUG)
+# Configure logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-@app.get("/webhook")
-async def verify_webhook(request: Request):
-    logger.debug("Webhook GET request received for verification")
-    mode = request.query_params.get("hub.mode")
-    token = request.query_params.get("hub.verify_token")
-    challenge = request.query_params.get("hub.challenge")
-
-    if mode and token:
-        if mode == "subscribe" and token == ALVOCHAT_TOKEN:
-            logger.info(f"Webhook verified successfully. URL: {ALVOCHAT_WEBHOOK_URL}")
-            return int(challenge)
-        else:
-            logger.warning("Webhook verification failed")
-            raise HTTPException(status_code=403, detail="Verification failed")
-    
-    raise HTTPException(status_code=400, detail="Missing parameters")
+app = FastAPI()
 
 @app.post("/webhook")
 async def webhook(request: Request, db: Session = Depends(get_db)):
-    logger.debug(f"Webhook POST request received at URL: {ALVOCHAT_WEBHOOK_URL}")
+    logger.info(f"Received webhook request to path: {request.url.path}")
+    logger.info(f"Query parameters: {request.query_params}")
+    
+    # Check if the token is provided as a query parameter
+    token = request.query_params.get("token")
+    if not token or token.strip() != settings.WEBHOOK_TOKEN:
+        logger.warning(f"Invalid or missing token: {token}")
+        raise HTTPException(status_code=403, detail="Invalid token")
+
     try:
-        body = await request.json()
-        logger.info(f"Received webhook data: {json.dumps(body, indent=2)}")
+        data = await request.json()
+        logger.info(f"Processed webhook data: {data}")
+        
+        if data.get("event_type") == "message_received" and "data" in data:
+            message_data = data["data"]
+            
+            # Create base message
+            new_message = Message(
+                id=message_data.get("id"),
+                waba_id=message_data.get("waba_id"),
+                phone_number_id=message_data.get("phone_number_id"),
+                from_number=message_data.get("from"),
+                to=message_data.get("to"),
+                pushname=message_data.get("pushname"),
+                type=message_data.get("type"),
+                body=message_data.get("body"),
+                time=message_data.get("time"),
+                raw_data=json.dumps(message_data)
+            )
+            db.add(new_message)
+            db.flush()
 
-        # Extract the message from the WhatsApp data structure
-        entry = body.get("entry", [{}])[0]
-        changes = entry.get("changes", [{}])[0]
-        value = changes.get("value", {})
-        messages = value.get("messages", [])
+            # Handle media if present
+            if message_data.get("media"):
+                media_message = MediaMessage(
+                    message_id=new_message.id,
+                    media_id=message_data["media"].get("id"),
+                    link=message_data["media"].get("link")
+                )
+                db.add(media_message)
 
-        if not messages:
-            logger.info("No messages in the webhook payload")
-            return JSONResponse(content={"status": "success", "message": "No messages to process"})
+            # Handle quoted message if present
+            if message_data.get("quotedMsg"):
+                quoted_message = QuotedMessage(
+                    message_id=new_message.id,
+                    quoted_data=json.dumps(message_data["quotedMsg"])
+                )
+                db.add(quoted_message)
 
-        for message in messages:
-            sender = message.get("from")
-            text = message.get("text", {}).get("body", "")
-            timestamp = datetime.fromtimestamp(int(message.get("timestamp")))
+            db.commit()
 
-            # Generate the response
-            response = f"Has dicho: {text}"
-            logger.debug(f"Generated response: {response}")
+            logger.info(f"Received {new_message.type} message from {new_message.from_number}: {new_message.body}")
 
-            # Send the response back via WhatsApp
-            whatsapp_response = whatsapp_handler.send_text_message(sender, response)
-            if not whatsapp_response:
-                logger.error("Error sending response message via WhatsApp")
-            else:
-                logger.debug("Response sent successfully")
+            # Generate and send response
+            response_message = f"Has dicho: {new_message.body}"
+            # Here you would typically use your WhatsApp API to send the response
+            # For now, we'll just log it
+            logger.info(f"Response to be sent to {new_message.from_number}: {response_message}")
 
-        return JSONResponse(content={"status": "success", "message": "Messages processed successfully"})
+            return {"status": "success", "message": "Message processed and response prepared"}
+
+        return {"status": "success", "message": "Webhook received and processed"}
     except Exception as e:
-        logger.error(f"Error in webhook: {str(e)}", exc_info=True)
-        return JSONResponse(status_code=500, content={"status": "error", "message": "Internal server error"})
+        logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/")
 async def root():
-    logger.debug("Root endpoint accessed")
-    return {"message": "WhatsApp Chatbot is running", "webhook_url": ALVOCHAT_WEBHOOK_URL}
+    logger.info("Root endpoint accessed")
+    return {"message": "WhatsApp Chatbot is running"}
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info(f"Starting server with webhook URL: {ALVOCHAT_WEBHOOK_URL}")
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="debug")
+    logger.info("Starting FastAPI application")
+    uvicorn.run(app, host="0.0.0.0", port=8001, log_level="debug")
 

@@ -1,0 +1,8 @@
+tunnel: ab2462ae-2521-4694-9033-e57f16141c09
+credentials-file: /Users/quim/.cloudflared/c3d5654a-0d3e-474c-b0ca-4785fb927214.json
+
+ingress:
+  - hostname: whatsapp-chatbot1.trycloudflare.com
+    service: http://localhost:8001
+  - service: http_status:404
+

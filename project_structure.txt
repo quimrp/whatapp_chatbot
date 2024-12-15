@@ -1,0 +1,31 @@
+whatsapp_chatbot/
+├── app/
+│   ├── __init__.py
+│   ├── config.py
+│   ├── database/
+│   │   ├── __init__.py
+│   │   ├── models.py
+│   │   └── connection.py
+│   ├── services/
+│   │   ├── __init__.py
+│   │   ├── alvochat.py
+│   │   └── whatsapp.py
+│   └── utils/
+│       ├── __init__.py
+│       └── logger.py
+├── tests/
+│   ├── __init__.py
+│   ├── test_alvochat_list.py
+│   ├── test_buttons.py
+│   ├── test_messages.py
+│   ├── test_product.py
+│   └── test_webhook.py
+├── scripts/
+│   ├── create_tables.py
+│   ├── init_db.py
+│   └── update_database.py
+├── .env.example
+├── .gitignore
+├── README.md
+└── requirements.txt
+
