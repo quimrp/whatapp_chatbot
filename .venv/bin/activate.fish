@@ -30,7 +30,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV "/Users/quim/whtatsapp_chatbot_alvochat/whatsapp_chatbot/.venv"
+set -gx VIRTUAL_ENV "/Users/quim/whatsapp_chatbot_alvochat_github/whatsapp_chatbot/.venv"
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/bin" $PATH

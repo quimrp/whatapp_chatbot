@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-from app.database.models import Message, InteractiveMessage, MultimediaMessage, Order, OrderItem
+from app.database.models import Message, InteractiveMessage, Multimediamessage, Order, OrderItem
 from app.database.connection import get_db
 from app.services.alvochat_api import AlvoChatAPI
 from app.config import settings
@@ -70,7 +70,7 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
                 logger.debug(f"Full message data: {json.dumps(message_data, indent=2)}")
                 logger.debug(f"Media type: {message_type}")
                 logger.debug(f"Media data: {json.dumps(media_data, indent=2)}")
-                multimedia_message = MultimediaMessage(
+                multimedia_message = Multimediamessage(
                     message_id=new_message.id,
                     media_type=message_type,
                     media_id=media_data.get("id"),

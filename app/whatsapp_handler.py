@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.config import settings
-from app.database import Message, MediaMessage, InteractiveMessage
+from app.database.models import Message, MediaMessage, InteractiveMessage
 from typing import List, Dict, Any, Optional
 import urllib3
 

@@ -21,7 +21,7 @@ class Message(Base):
     raw_data = Column(String)
 
     interactive_message = relationship("InteractiveMessage", back_populates="message", uselist=False)
-    multimedia_message = relationship("MultimediaMessage", back_populates="message", uselist=False)
+    multimedia_message = relationship("Multimediamessage", back_populates="message", uselist=False)
     order = relationship("Order", back_populates="message", uselist=False)
 
 class InteractiveMessage(Base):
@@ -34,7 +34,7 @@ class InteractiveMessage(Base):
 
     message = relationship("Message", back_populates="interactive_message")
 
-class MultimediaMessage(Base):
+class Multimediamessage(Base):
     __tablename__ = "multimedia_messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
