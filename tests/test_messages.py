@@ -2,7 +2,7 @@ import sys
 import os
 import logging
 from app.whatsapp_handler import WhatsAppHandler
-from app.config import settings
+from app.config import Settings
 
 # Add the project root directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))

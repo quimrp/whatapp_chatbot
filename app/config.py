@@ -1,5 +1,11 @@
 from pydantic import BaseSettings
 from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+# Carga manualmente el archivo .env
+env_path = Path(__file__).parent.parent / '.env'
+load_dotenv(env_path)
 
 class Settings(BaseSettings):
     ALVOCHAT_TOKEN: str
@@ -9,17 +15,15 @@ class Settings(BaseSettings):
     DATABASE_URL: str = f"sqlite:///{Path(__file__).parent.parent}/whatsapp_bot.db"
     TEST_PHONE_NUMBER: str
     WEBHOOK_TOKEN: str
+    EMAIL_USERNAME: str
+    EMAIL_PASSWORD: str
 
     class Config:
         env_file = ".env"
+        env_file_encoding = 'utf-8'
 
 settings = Settings()
 
-print(f"Database URL: {settings.DATABASE_URL}")  # Add this line for debugging
-print(f"ALVOCHAT_TOKEN: {settings.ALVOCHAT_TOKEN}")
-print(f"ALVOCHAT_INSTANCE_ID: {settings.ALVOCHAT_INSTANCE_ID}")
-print(f"ALVOCHAT_API_URL: {settings.ALVOCHAT_API_URL}")
-print(f"ALVOCHAT_WEBHOOK_URL: {settings.ALVOCHAT_WEBHOOK_URL}")
-print(f"DATABASE_URL: {settings.DATABASE_URL}")
-print(f"TEST_PHONE_NUMBER: {settings.TEST_PHONE_NUMBER}")
-print(f"WEBHOOK_TOKEN: {settings.WEBHOOK_TOKEN}")
+print(f"Loaded WEBHOOK_TOKEN: {settings.WEBHOOK_TOKEN}")
+print(f"Environment WEBHOOK_TOKEN: {os.environ.get('WEBHOOK_TOKEN')}")
+

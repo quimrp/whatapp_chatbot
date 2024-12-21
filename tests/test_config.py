@@ -1,4 +1,4 @@
-from app.config import settings
+from config import settings
 
 def test_config():
     print(f"ALVOCHAT_TOKEN: {settings.ALVOCHAT_TOKEN}")

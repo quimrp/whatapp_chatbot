@@ -1,9 +1,11 @@
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, Header
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-from app.database.models import Message, InteractiveMessage, Multimediamessage, Order, OrderItem
+from app.database.models import Message, MultimediaMessage, Order, OrderItem, FlowState, User, WindowQuote, Window
 from app.database.connection import get_db
 from app.services.alvochat_api import AlvoChatAPI
+from app.flows import get_flow, get_all_flows
+from app.utils.email_sender import send_email
 from app.config import settings
 import logging
 from datetime import datetime
@@ -11,175 +13,271 @@ import json
 
 app = FastAPI()
 alvochat_api = AlvoChatAPI()
-
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger.info("AlvoChatAPI instance created")
+
+@app.get("/")
+async def root():
+    return {"message": "Bienvenido al sistema de presupuestos de ventanas"}
 
 @app.post("/webhook")
-async def webhook(request: Request, db: Session = Depends(get_db)):
-    logger.info(f"Received webhook request to path: {request.url.path}")
-    logger.info(f"Query parameters: {request.query_params}")
-    
-    # Check if the token is provided as a query parameter
+async def webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+    authorization: str = Header(None)
+):
+    logger.debug(f"Received webhook request. Query params: {request.query_params}")
+    logger.debug(f"Authorization header: {authorization}")
+
+    # Check for token in query params
     token = request.query_params.get("token")
-    if not token or token.strip() != settings.WEBHOOK_TOKEN:
-        logger.warning(f"Invalid or missing token: {token}")
+
+    # If not in query params, check in Authorization header
+    if not token and authorization:
+        if authorization.startswith("Bearer "):
+            token = authorization.split("Bearer ")[1]
+        else:
+            token = authorization
+
+    if not token:
+        logger.warning("No token received")
+        raise HTTPException(status_code=403, detail="No token provided")
+
+    if token != settings.WEBHOOK_TOKEN:
+        logger.warning(f"Invalid token received: {token}")
         raise HTTPException(status_code=403, detail="Invalid token")
 
+    logger.info(f"Received webhook request with valid token")
     try:
-        data = await request.json()
-        logger.info(f"Received webhook data: {json.dumps(data, indent=2)}")
-        
-        if data.get("event_type") == "message_received" and "data" in data:
-            message_data = data["data"]
-            sender = message_data.get("from")
-            message_body = message_data.get("body", "")
-            message_type = message_data.get("type", "unknown")
-            timestamp = datetime.fromtimestamp(int(message_data.get("time", 0)))
+        body = await request.json()
+        logger.debug(f"Webhook request body: {json.dumps(body, indent=2)}")
+        message_data = body.get("data", {})
+        message_type = message_data.get("type")
+        sender = message_data.get("from")
+        text = message_data.get("body", "")
+        wamid = message_data.get("id")
 
-            logger.info(f"Processing {message_type} message from {sender}: {message_body}")
+        if not sender or not message_type or not wamid:
+            raise HTTPException(status_code=400, detail="Invalid message format")
 
-            # Save the base message to the database
-            new_message = Message(
-                wamid=message_data.get("id"),
-                waba_id=message_data.get("waba_id"),
-                phone_number_id=message_data.get("phone_number_id"),
-                from_number=sender,
-                to=message_data.get("to"),
-                pushname=message_data.get("pushname"),
-                type=message_type,
-                body=message_body,
-                time=timestamp,
-                raw_data=json.dumps(message_data)
+        # Verificar si el mensaje ya existe
+        existing_message = db.query(Message).filter(Message.wamid == wamid).first()
+        if existing_message:
+            logger.info(f"Duplicate message received with wamid: {wamid}")
+            return {"status": "success", "message": "Duplicate message"}
+
+        user = get_or_create_user(db, sender)
+        flow_state = db.query(FlowState).filter(FlowState.user_id == sender).first()
+        if not flow_state:
+            # Si es el primer mensaje del usuario, creamos un nuevo FlowState con valores iniciales
+            flow_state = FlowState(
+                user_id=sender,
+                current_flow="none",
+                current_node=None,
+                context={}
             )
-            db.add(new_message)
-            db.flush()  # This will populate the id field
-
-            logger.info(f"New message created with ID: {new_message.id}")
-
-            # Handle different message types
-            if message_type in ["button", "list", "template"]:
-                interactive_message = InteractiveMessage(
-                    message_id=new_message.id,
-                    interactive_type=message_type,
-                    content=json.dumps(message_data.get("interactive", {}))
-                )
-                db.add(interactive_message)
-            elif message_type in ["image", "video", "audio", "document"]:
-                media_data = message_data.get("media", {})
-                logger.debug(f"Full message data: {json.dumps(message_data, indent=2)}")
-                logger.debug(f"Media type: {message_type}")
-                logger.debug(f"Media data: {json.dumps(media_data, indent=2)}")
-                multimedia_message = Multimediamessage(
-                    message_id=new_message.id,
-                    media_type=message_type,
-                    media_id=media_data.get("id"),
-                    media_url=media_data.get("link")
-                )
-                db.add(multimedia_message)
-                logger.info(f"Multimedia message added for message ID: {new_message.id}")
-                logger.info(f"Media URL: {media_data.get('link')}")
-            elif message_type == "order":
-                order_data = message_data.get("order", {})
-                total_price = sum(item.get("item_price", 0) * item.get("quantity", 0) for item in order_data.get("product_items", []))
-                new_order = Order(
-                    message_id=new_message.id,
-                    catalog_id=order_data.get("catalog_id"),
-                    status="recibido",
-                    total_price=total_price,
-                    order_time=timestamp
-                )
-                db.add(new_order)
-                db.flush()
-
-                for index, item in enumerate(order_data.get("product_items", []), start=1):
-                    order_item = OrderItem(
-                        order_id=new_order.id,
-                        product_retailer_id=item.get("product_retailer_id"),
-                        catalog_id=order_data.get("catalog_id"),
-                        item_id=item.get("product_id"),
-                        quantity=item.get("quantity"),
-                        item_price=item.get("item_price"),
-                        currency=item.get("currency"),
-                        item_order=index
-                    )
-                    db.add(order_item)
-
-            try:
-                db.commit()
-                logger.info(f"Successfully processed {message_type} message from {sender}")
-            except SQLAlchemyError as e:
-                db.rollback()
-                logger.error(f"Database error: {str(e)}")
-                raise HTTPException(status_code=500, detail="Database error")
-
-            # Generate and send response
-            response_message = "Gracias por tu pedido! Lo hemos recibido y está en proceso." if message_type == "order" else f"Has dicho: {message_body}"
-            send_result = alvochat_api.send_message(sender, response_message)
-            
-            if send_result:
-                logger.info(f"Response sent to {sender}. Result: {send_result}")
-                return {"status": "success", "message": "Message processed and response sent"}
-            else:
-                logger.error(f"Failed to send response to {sender}")
-                raise HTTPException(status_code=500, detail="Failed to send response")
+            db.add(flow_state)
+            db.commit()
         else:
-            logger.info("No valid message data in the webhook payload")
-            return {"status": "success", "message": "No valid message data to process"}
-    except json.JSONDecodeError:
-        logger.error("Invalid JSON in webhook payload")
-        raise HTTPException(status_code=400, detail="Invalid JSON")
+            # Si el usuario ya existe pero no está en un flujo, aseguramos que el estado sea "none"
+            if not flow_state.current_flow or flow_state.current_flow == "none":
+                flow_state.current_flow = "none"
+                flow_state.current_node = None
+                flow_state.context = {}
+            flow_state.last_updated = datetime.now()
+
+        next_node = None
+        response = ""
+        flow = None
+
+        if flow_state.current_flow == "none":
+            next_node = None
+
+        # Si el flujo actual es "none", intentamos identificar un nuevo flujo basado en el mensaje
+        if flow_state.current_flow == "none":
+            all_flows = get_all_flows()
+            for flow in all_flows:
+                if any(keyword in text.lower() for keyword in flow.keywords):
+                    flow_state.current_flow = flow.name
+                    flow_state.current_node = "start"
+                    flow_state.context = {}
+                    flow = get_flow(flow_state.current_flow)
+                    next_node, response = flow.process_message("start", message_data, flow_state.context)
+                    break
+    
+            if flow_state.current_flow == "none":
+                next_node = None
+                response = "Bienvenido. No estás en ningún flujo específico. ¿En qué puedo ayudarte?"
+        elif flow_state.current_flow:
+            flow = get_flow(flow_state.current_flow)
+            if flow:
+                next_node, response = flow.process_message(flow_state.current_node, message_data, flow_state.context)
+            else:
+                next_node = None
+                response = "Lo siento, ha ocurrido un error al procesar tu mensaje."
+                flow_state.current_flow = "none"
+                flow_state.current_node = None
+                flow_state.context = {}
+        else:
+            next_node = None
+            response = "Lo siento, no pude procesar tu mensaje. ¿Puedes intentar de nuevo?"
+
+        if next_node is not None:
+            flow_state.current_node = next_node
+
+            # Actualizar el contexto con la información de la ventana
+            if flow_state.current_flow == "window_quote":
+                if "current_window" not in flow_state.context:
+                    flow_state.context["current_window"] = {}
+
+                if flow_state.current_node == "ask_reference":
+                    flow_state.context["current_window"]["reference"] = text
+                elif flow_state.current_node == "ask_width":
+                    flow_state.context["current_window"]["width"] = text
+                elif flow_state.current_node == "ask_height":
+                    flow_state.context["current_window"]["height"] = text
+                elif flow_state.current_node == "ask_image":
+                    if message_type == "image":
+                        flow_state.context["current_window"]["image"] = message_data.get("image", {}).get("link")
+                elif flow_state.current_node == "ask_color":
+                    flow_state.context["current_window"]["color"] = message_data.get("interactive", {}).get("list_reply", {}).get("id")
+                elif flow_state.current_node == "ask_blind":
+                    flow_state.context["current_window"]["has_blind"] = message_data.get("interactive", {}).get("button_reply", {}).get("id") == "si_persiana"
+                elif flow_state.current_node == "ask_motor":
+                    flow_state.context["current_window"]["motorized_blind"] = message_data.get("interactive", {}).get("button_reply", {}).get("id") == "si_motor"
+                elif flow_state.current_node == "ask_opening":
+                    flow_state.context["current_window"]["opening_type"] = message_data.get("interactive", {}).get("list_reply", {}).get("id")
+                elif flow_state.current_node == "ask_another":
+                    if "windows" not in flow_state.context:
+                        flow_state.context["windows"] = []
+                    flow_state.context["windows"].append(flow_state.context.pop("current_window", {}))
+
+        if next_node is None and flow_state.current_flow == "window_quote":
+            # Generar y enviar el resumen del presupuesto
+            summary = generate_quote_summary(flow_state.context)
+            if user.email:
+                send_email(user.email, "Resumen de presupuesto de ventanas", summary)
+                response += "\n\nSe ha enviado un resumen detallado a tu correo electrónico."
+            else:
+                response += "\n\n" + summary
+            flow_state.current_flow = "none"
+            flow_state.current_node = None
+            flow_state.context = {}
+
+        # Guardar los cambios en la base de datos
+        db.commit()
+
+        # Guardar el mensaje en la base de datos
+        new_message = Message(
+            wamid=wamid,
+            sender_id=sender,
+            content=json.dumps(message_data),
+            message_type=message_type,
+            timestamp=datetime.now()
+        )
+        db.add(new_message)
+        db.commit()
+
+        # Guardar la respuesta del bot
+        bot_response = Message(
+            wamid=f"bot_response_{wamid}",
+            sender_id="BOT",
+            content=json.dumps({"text": response}),
+            message_type="text",
+            timestamp=datetime.now()
+        )
+        db.add(bot_response)
+        db.commit()
+
+        # Manejar diferentes tipos de mensajes
+        if message_type in ["image", "video", "audio", "document"]:
+            save_multimedia_message(db, new_message, message_data)
+        elif message_type == "order":
+            save_order(db, new_message, message_data)
+
+        # Enviar la respuesta
+        if response:
+            logger.debug(f"Attempting to send message to {sender}: {response}")
+            try:
+                if isinstance(response, dict) and response.get("type") == "interactive":
+                    result = alvochat_api.send_interactive_message(sender, response["interactive"])
+                else:
+                    result = alvochat_api.send_message(sender, response)
+                logger.info(f"Message sent successfully: {result}")
+            except Exception as e:
+                logger.error(f"Error sending message: {str(e)}")
+
+        return {"status": "success", "message": "Message processed"}
+
+    except SQLAlchemyError as e:
+        db.rollback()
+        logger.error(f"Database error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Database error")
     except Exception as e:
         logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/orders")
-async def get_orders(db: Session = Depends(get_db)):
-    orders = db.query(Order).order_by(Order.order_time.desc()).all()
-    order_list = []
-    for order in orders:
-        order_dict = {
-            "id": order.id,
-            "catalog_id": order.catalog_id,
-            "status": order.status,
-            "total_price": order.total_price,
-            "order_time": order.order_time.isoformat(),
-            "items": [
-                {
-                    "product_retailer_id": item.product_retailer_id,
-                    "item_id": item.item_id,
-                    "quantity": item.quantity,
-                    "item_price": item.item_price,
-                    "currency": item.currency,
-                    "item_order": item.item_order
-                } for item in sorted(order.items, key=lambda x: x.item_order)
-            ]
-        }
-        order_list.append(order_dict)
-    return {"orders": order_list}
+def get_or_create_user(db: Session, user_id: str) -> User:
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if not user:
+        user = User(user_id=user_id)
+        db.add(user)
+        db.commit()
+    return user
 
-@app.put("/orders/{order_id}/status")
-async def update_order_status(order_id: int, status: str, db: Session = Depends(get_db)):
-    valid_statuses = ['recibido', 'preparacion', 'enviado', 'entregado']
-    if status not in valid_statuses:
-        raise HTTPException(status_code=400, detail="Invalid status")
+def generate_quote_summary(context: dict) -> str:
+    windows = context.get("windows", [])
+    summary = "Resumen de presupuesto de ventanas:\n\n"
+    for i, window in enumerate(windows, 1):
+        summary += f"Ventana {i}:\n"
+        summary += f"  Referencia: {window.get('reference', 'N/A')}\n"
+        summary += f"  Ancho: {window.get('width', 'N/A')} cm\n"
+        summary += f"  Alto: {window.get('height', 'N/A')} cm\n"
+        summary += f"  Color: {window.get('color', 'N/A')}\n"
+        summary += f"  Persiana: {'Sí' if window.get('has_blind') else 'No'}\n"
+        if window.get('has_blind'):
+            summary += f"  Motorizada: {'Sí' if window.get('motorized_blind') else 'No'}\n"
+        summary += f"  Tipo de apertura: {window.get('opening_type', 'N/A')}\n"
+        if window.get('image'):
+            summary += f"  Imagen: {window.get('image')}\n"
+        summary += "\n"
+    return summary
 
-    order = db.query(Order).filter(Order.id == order_id).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    order.status = status
+def save_multimedia_message(db: Session, message: Message, message_data: dict):
+    media_data = message_data.get("media", {})
+    multimedia_message = MultimediaMessage(
+        message_id=message.id,
+        media_type=message.message_type,
+        media_id=media_data.get("id"),
+        media_url=media_data.get("link")
+    )
+    db.add(multimedia_message)
     db.commit()
 
-    return {"message": f"Order status updated to {status}"}
-
-@app.get("/")
-async def root():
-    logger.info("Root endpoint accessed")
-    return {"message": "WhatsApp Chatbot is running"}
+def save_order(db: Session, message: Message, message_data: dict):
+    order_data = message_data.get("order", {})
+    new_order = Order(
+        message_id=message.id,
+        catalog_id=order_data.get("catalog_id"),
+        status="recibido",
+        total_price=order_data.get("total_amount", {}).get("amount")
+    )
+    db.add(new_order)
+    for item in order_data.get("products", []):
+        order_item = OrderItem(
+            order=new_order,
+            product_retailer_id=item.get("product_retailer_id"),
+            catalog_id=item.get("catalog_id"),
+            item_id=item.get("id"),
+            quantity=item.get("quantity"),
+            item_price=item.get("price"),
+            currency=item.get("currency")
+        )
+        db.add(order_item)
+    db.commit()
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info("Starting FastAPI application")
-    uvicorn.run(app, host="0.0.0.0", port=8001, log_level="debug")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 

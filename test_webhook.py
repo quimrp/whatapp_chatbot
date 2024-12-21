@@ -7,7 +7,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # URL del webhook (asegúrate de reemplazar esto con la URL correcta de tu aplicación)
-WEBHOOK_URL = "https://chairman-spectrum-transportation-housing.trycloudflare.com/webhook?token=q5pejbvpm76yrmxo"  # Cambia esto si estás usando un túnel o una URL diferente
+WEBHOOK_URL = "https://landing-bookstore-argue-resource.trycloudflare.com/webhook?token=mg6mk5urtmw3x0ku"  # Cambia esto si estás usando un túnel o una URL diferente
 
 def simulate_whatsapp_message(phone_number: str, message: str):
     """
