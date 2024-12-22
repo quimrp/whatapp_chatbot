@@ -15,40 +15,18 @@ app = FastAPI()
 alvochat_api = AlvoChatAPI()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger.info("AlvoChatAPI instance created")
-
-@app.get("/")
-async def root():
-    return {"message": "Bienvenido al sistema de presupuestos de ventanas"}
 
 @app.post("/webhook")
-async def webhook(
-    request: Request,
-    db: Session = Depends(get_db),
-    authorization: str = Header(None)
-):
+async def webhook(request: Request, db: Session = Depends(get_db), authorization: str = Header(None)):
     logger.debug(f"Received webhook request. Query params: {request.query_params}")
     logger.debug(f"Authorization header: {authorization}")
 
-    # Check for token in query params
-    token = request.query_params.get("token")
+    token = request.query_params.get("token") or (authorization.split("Bearer ")[1] if authorization and authorization.startswith("Bearer ") else authorization)
 
-    # If not in query params, check in Authorization header
-    if not token and authorization:
-        if authorization.startswith("Bearer "):
-            token = authorization.split("Bearer ")[1]
-        else:
-            token = authorization
-
-    if not token:
-        logger.warning("No token received")
-        raise HTTPException(status_code=403, detail="No token provided")
-
-    if token != settings.WEBHOOK_TOKEN:
-        logger.warning(f"Invalid token received: {token}")
+    if not token or token != settings.WEBHOOK_TOKEN:
+        logger.warning(f"Invalid or missing token: {token}")
         raise HTTPException(status_code=403, detail="Invalid token")
 
-    logger.info(f"Received webhook request with valid token")
     try:
         body = await request.json()
         logger.debug(f"Webhook request body: {json.dumps(body, indent=2)}")
@@ -61,40 +39,18 @@ async def webhook(
         if not sender or not message_type or not wamid:
             raise HTTPException(status_code=400, detail="Invalid message format")
 
-        # Verificar si el mensaje ya existe
         existing_message = db.query(Message).filter(Message.wamid == wamid).first()
         if existing_message:
             logger.info(f"Duplicate message received with wamid: {wamid}")
             return {"status": "success", "message": "Duplicate message"}
 
         user = get_or_create_user(db, sender)
-        flow_state = db.query(FlowState).filter(FlowState.user_id == sender).first()
-        if not flow_state:
-            # Si es el primer mensaje del usuario, creamos un nuevo FlowState con valores iniciales
-            flow_state = FlowState(
-                user_id=sender,
-                current_flow="none",
-                current_node=None,
-                context={}
-            )
-            db.add(flow_state)
-            db.commit()
-        else:
-            # Si el usuario ya existe pero no está en un flujo, aseguramos que el estado sea "none"
-            if not flow_state.current_flow or flow_state.current_flow == "none":
-                flow_state.current_flow = "none"
-                flow_state.current_node = None
-                flow_state.context = {}
-            flow_state.last_updated = datetime.now()
+        flow_state = get_or_create_flow_state(db, sender)
 
         next_node = None
         response = ""
         flow = None
 
-        if flow_state.current_flow == "none":
-            next_node = None
-
-        # Si el flujo actual es "none", intentamos identificar un nuevo flujo basado en el mensaje
         if flow_state.current_flow == "none":
             all_flows = get_all_flows()
             for flow in all_flows:
@@ -105,7 +61,7 @@ async def webhook(
                     flow = get_flow(flow_state.current_flow)
                     next_node, response = flow.process_message("start", message_data, flow_state.context)
                     break
-    
+            
             if flow_state.current_flow == "none":
                 next_node = None
                 response = "Bienvenido. No estás en ningún flujo específico. ¿En qué puedo ayudarte?"
@@ -114,61 +70,31 @@ async def webhook(
             if flow:
                 next_node, response = flow.process_message(flow_state.current_node, message_data, flow_state.context)
             else:
-                next_node = None
-                response = "Lo siento, ha ocurrido un error al procesar tu mensaje."
-                flow_state.current_flow = "none"
-                flow_state.current_node = None
-                flow_state.context = {}
+                raise ValueError(f"Flujo no encontrado: {flow_state.current_flow}")
         else:
-            next_node = None
-            response = "Lo siento, no pude procesar tu mensaje. ¿Puedes intentar de nuevo?"
+            raise ValueError("Estado de flujo inválido")
 
         if next_node is not None:
             flow_state.current_node = next_node
 
-            # Actualizar el contexto con la información de la ventana
             if flow_state.current_flow == "window_quote":
-                if "current_window" not in flow_state.context:
-                    flow_state.context["current_window"] = {}
+                update_window_quote_context(flow_state, next_node, message_data)
 
-                if flow_state.current_node == "ask_reference":
-                    flow_state.context["current_window"]["reference"] = text
-                elif flow_state.current_node == "ask_width":
-                    flow_state.context["current_window"]["width"] = text
-                elif flow_state.current_node == "ask_height":
-                    flow_state.context["current_window"]["height"] = text
-                elif flow_state.current_node == "ask_image":
-                    if message_type == "image":
-                        flow_state.context["current_window"]["image"] = message_data.get("image", {}).get("link")
-                elif flow_state.current_node == "ask_color":
-                    flow_state.context["current_window"]["color"] = message_data.get("interactive", {}).get("list_reply", {}).get("id")
-                elif flow_state.current_node == "ask_blind":
-                    flow_state.context["current_window"]["has_blind"] = message_data.get("interactive", {}).get("button_reply", {}).get("id") == "si_persiana"
-                elif flow_state.current_node == "ask_motor":
-                    flow_state.context["current_window"]["motorized_blind"] = message_data.get("interactive", {}).get("button_reply", {}).get("id") == "si_motor"
-                elif flow_state.current_node == "ask_opening":
-                    flow_state.context["current_window"]["opening_type"] = message_data.get("interactive", {}).get("list_reply", {}).get("id")
-                elif flow_state.current_node == "ask_another":
-                    if "windows" not in flow_state.context:
-                        flow_state.context["windows"] = []
-                    flow_state.context["windows"].append(flow_state.context.pop("current_window", {}))
-
-        if next_node is None and flow_state.current_flow == "window_quote":
-            # Generar y enviar el resumen del presupuesto
+        if next_node == "end" and flow_state.current_flow == "window_quote":
             summary = generate_quote_summary(flow_state.context)
             if user.email:
                 send_email(user.email, "Resumen de presupuesto de ventanas", summary)
                 response += "\n\nSe ha enviado un resumen detallado a tu correo electrónico."
             else:
                 response += "\n\n" + summary
+            save_window_quote(db, user, flow_state.context)
             flow_state.current_flow = "none"
             flow_state.current_node = None
             flow_state.context = {}
 
-        # Guardar los cambios en la base de datos
+        db.add(flow_state)
         db.commit()
 
-        # Guardar el mensaje en la base de datos
         new_message = Message(
             wamid=wamid,
             sender_id=sender,
@@ -179,7 +105,6 @@ async def webhook(
         db.add(new_message)
         db.commit()
 
-        # Guardar la respuesta del bot
         bot_response = Message(
             wamid=f"bot_response_{wamid}",
             sender_id="BOT",
@@ -190,20 +115,15 @@ async def webhook(
         db.add(bot_response)
         db.commit()
 
-        # Manejar diferentes tipos de mensajes
         if message_type in ["image", "video", "audio", "document"]:
             save_multimedia_message(db, new_message, message_data)
         elif message_type == "order":
             save_order(db, new_message, message_data)
 
-        # Enviar la respuesta
         if response:
             logger.debug(f"Attempting to send message to {sender}: {response}")
             try:
-                if isinstance(response, dict) and response.get("type") == "interactive":
-                    result = alvochat_api.send_interactive_message(sender, response["interactive"])
-                else:
-                    result = alvochat_api.send_message(sender, response)
+                result = alvochat_api.send_message(sender, response)
                 logger.info(f"Message sent successfully: {result}")
             except Exception as e:
                 logger.error(f"Error sending message: {str(e)}")
@@ -226,6 +146,43 @@ def get_or_create_user(db: Session, user_id: str) -> User:
         db.commit()
     return user
 
+def get_or_create_flow_state(db: Session, user_id: str) -> FlowState:
+    flow_state = db.query(FlowState).filter(FlowState.user_id == user_id).first()
+    if not flow_state:
+        flow_state = FlowState(
+            user_id=user_id,
+            current_flow="none",
+            current_node=None,
+            context={}
+        )
+        db.add(flow_state)
+        db.commit()
+    return flow_state
+
+def update_window_quote_context(flow_state: FlowState, current_node: str, message_data: dict):
+    if "current_window" not in flow_state.context:
+        flow_state.context["current_window"] = {}
+
+    if current_node == "ask_width":
+        flow_state.context["current_window"]["reference"] = message_data.get("body")
+    elif current_node == "ask_height":
+        flow_state.context["current_window"]["width"] = float(message_data.get("body"))
+    elif current_node == "ask_image":
+        flow_state.context["current_window"]["height"] = float(message_data.get("body"))
+        if message_data.get("type") == "image":
+            flow_state.context["current_window"]["image"] = message_data.get("image", {}).get("link")
+    elif current_node == "ask_blind":
+        flow_state.context["current_window"]["color"] = message_data.get("body")
+    elif current_node == "ask_motor":
+        flow_state.context["current_window"]["has_blind"] = message_data.get("body").lower() == "sí"
+    elif current_node == "ask_opening":
+        flow_state.context["current_window"]["motorized_blind"] = message_data.get("body").lower() == "sí"
+    elif current_node == "ask_another":
+        flow_state.context["current_window"]["opening_type"] = message_data.get("body")
+        if "windows" not in flow_state.context:
+            flow_state.context["windows"] = []
+        flow_state.context["windows"].append(flow_state.context.pop("current_window", {}))
+
 def generate_quote_summary(context: dict) -> str:
     windows = context.get("windows", [])
     summary = "Resumen de presupuesto de ventanas:\n\n"
@@ -244,8 +201,29 @@ def generate_quote_summary(context: dict) -> str:
         summary += "\n"
     return summary
 
+def save_window_quote(db: Session, user: User, context: dict):
+    quote = WindowQuote(user_id=user.user_id, status="pendiente")
+    db.add(quote)
+    db.flush()
+
+    for window_data in context.get("windows", []):
+        window = Window(
+            quote_id=quote.id,
+            reference=window_data.get("reference"),
+            width=window_data.get("width"),
+            height=window_data.get("height"),
+            color=window_data.get("color"),
+            has_blind=window_data.get("has_blind"),
+            motorized_blind=window_data.get("motorized_blind"),
+            opening_type=window_data.get("opening_type"),
+            image_url=window_data.get("image")
+        )
+        db.add(window)
+
+    db.commit()
+
 def save_multimedia_message(db: Session, message: Message, message_data: dict):
-    media_data = message_data.get("media", {})
+    media_data = message_data.get("image") or message_data.get("video") or message_data.get("audio") or message_data.get("document", {})
     multimedia_message = MultimediaMessage(
         message_id=message.id,
         media_type=message.message_type,

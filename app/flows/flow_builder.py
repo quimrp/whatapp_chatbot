@@ -1,12 +1,12 @@
-from typing import Dict, Any, Optional, Callable, List
+from typing import Dict, Any, Optional, Callable, List, Union
 
 class ConversationNode:
-    def __init__(self, node_type: str, content: Dict[str, Any]):
+    def __init__(self, node_type: str, content: Union[Dict[str, Any], List[Dict[str, Any]]]):
         self.node_type = node_type
         self.content = content
         self.jumps = []
 
-    def to_alvochat_format(self) -> Dict[str, Any]:
+    def to_alvochat_format(self) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         return self.content
 
     def get_next_node(self, user_response: str) -> Optional[str]:
@@ -22,7 +22,7 @@ class FlowBuilder:
         self.nodes = {}
         self.current_node = None
 
-    def add_node(self, node_name: str, node_type: str, content: Dict[str, Any]) -> 'FlowBuilder':
+    def add_node(self, node_name: str, node_type: str, content: Union[Dict[str, Any], List[Dict[str, Any]]]) -> 'FlowBuilder':
         self.nodes[node_name] = ConversationNode(node_type, content)
         self.current_node = node_name
         return self
@@ -50,6 +50,9 @@ class FlowBuilder:
             }
         })
 
+    def add_multi_message_node(self, node_name: str, messages: List[Dict[str, Any]]) -> 'FlowBuilder':
+        return self.add_node(node_name, "multi_message", messages)
+
     def add_jump(self, source: str, target: str, condition: Callable[[str], bool] = lambda _: True) -> 'FlowBuilder':
         if source not in self.nodes:
             raise ValueError(f"Source node '{source}' does not exist")
@@ -73,16 +76,21 @@ class ConversationFlow:
     def get_node(self, node_id: str) -> Optional[ConversationNode]:
         return self.nodes.get(node_id)
 
-    def process_message(self, current_node: str, message_data: Dict[str, Any], context: Dict[str, Any]) -> tuple[Optional[str], str]:
+    def process_message(self, current_node: str, message_data: Dict[str, Any], context: Dict[str, Any]) -> tuple[Optional[str], Union[str, List[Dict[str, Any]]]]:
         node = self.get_node(current_node)
         if not node:
             return None, "Lo siento, no puedo procesar tu mensaje en este momento."
         
         next_node = node.get_next_node(message_data.get("body", ""))
         
-        response = node.content.get("text", "")
-        if node.node_type == "interactive":
-            response = node.content.get("body", {}).get("text", "")
+        if node.node_type == "multi_message":
+            return next_node, node.content
+        elif node.node_type == "interactive":
+            return next_node, node.content
+        else:
+            response = node.content.get("text", "")
+            if node.node_type == "interactive":
+                response = node.content.get("body", {}).get("text", "")
         
         return next_node, response
 

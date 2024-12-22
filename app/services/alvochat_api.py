@@ -13,15 +13,13 @@ class AlvoChatAPI:
         self.base_url = settings.ALVOCHAT_API_URL
         self.token = settings.ALVOCHAT_TOKEN
         self.instance_id = settings.ALVOCHAT_INSTANCE_ID
-        logger.info(f"AlvoChatAPI initialized with URL: {self.base_url}")
+        logger.info(f"AlvoChatAPI initialized with URL: {self.base_url}, Instance ID: {self.instance_id}")
 
     def _build_url(self, endpoint):
-        return f"{self.base_url}/{endpoint}"
-
+       return f"{self.base_url}/{endpoint}"
     def send_message(self, to: str, message: str, priority: str = "", preview_url: str = "", message_id: str = ""):
         url = self._build_url("messages/chat")
-        logger.info(f"Sending message using URL: {url}")
-        
+        logger.debug(f"Sending message to URL: {url}")
         payload = {
             "token": self.token,
             "to": to,
@@ -30,14 +28,10 @@ class AlvoChatAPI:
             "preview_url": preview_url,
             "message_id": message_id
         }
-        
         encoded_payload = urlencode(payload).encode('utf8').decode('iso-8859-1')
-        
         headers = {
             "Content-Type": "application/x-www-form-urlencoded"
         }
-
-        logger.debug(f"Sending message to {to}: {message}")
         try:
             response = requests.post(url, data=encoded_payload, headers=headers, verify=False)
             response.raise_for_status()
@@ -47,25 +41,121 @@ class AlvoChatAPI:
             logger.error(f"Error sending message to {to}: {str(e)}")
             raise
 
-    def send_interactive_message(self, to: str, interactive_content: dict):
-        # Note: This method may need to be updated based on AlvoChat's specific requirements for interactive messages
-        logger.warning("send_interactive_message method may need to be updated to match AlvoChat's API requirements")
-        url = self._build_url("messages/chat")
-        logger.info(f"Sending interactive message using URL: {url}")
+    def send_image_message(self, to: str, image_url: str, caption: str = "", priority: str = "", message_id: str = ""):
+        url = self._build_url("messages/image")
         payload = {
             "token": self.token,
             "to": to,
-            "body": str(interactive_content)
+            "image": image_url,
+            "caption": caption,
+            "priority": priority,
+            "message_id": message_id
         }
+        encoded_payload = urlencode(payload).encode('utf8').decode('iso-8859-1')
         headers = {
-            "Content-Type": "application/json"
+            "Content-Type": "application/x-www-form-urlencoded"
         }
         try:
-            response = requests.post(url, json=payload, headers=headers, verify=False)
+            response = requests.post(url, data=encoded_payload, headers=headers, verify=False)
             response.raise_for_status()
-            logger.info(f"Interactive message sent successfully to {to}")
+            logger.info(f"Image message sent successfully to {to}")
             return response.json()
         except requests.RequestException as e:
-            logger.error(f"Error sending interactive message to {to}: {str(e)}")
+            logger.error(f"Error sending image message to {to}: {str(e)}")
             raise
+
+    def send_button_message(self, to: str, body: str, buttons: list, header: str = "", footer: str = "", priority: str = "", message_id: str = ""):
+        url = self._build_url("messages/button")
+        payload = {
+            "token": self.token,
+            "to": to,
+            "header": header,
+            "body": body,
+            "footer": footer,
+            "priority": priority,
+            "message_id": message_id
+        }
+        
+        for i, button in enumerate(buttons):
+            payload[f"buttons[{i}]"] = button
+
+        encoded_payload = urlencode(payload).encode('utf8').decode('iso-8859-1')
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        try:
+            response = requests.post(url, data=encoded_payload, headers=headers, verify=False)
+            response.raise_for_status()
+            logger.info(f"Button message sent successfully to {to}")
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Error sending button message to {to}: {str(e)}")
+            raise
+
+    def send_list_message(self, to: str, body: str, button: str, sections: list, header: str = "", footer: str = "", priority: str = "", message_id: str = ""):
+        url = self._build_url("messages/list")
+        payload = {
+            "token": self.token,
+            "to": to,
+            "header": header,
+            "body": body,
+            "footer": footer,
+            "button": button,
+            "priority": priority,
+            "message_id": message_id
+        }
+        
+        for i, section in enumerate(sections):
+            payload[f"sections[{i}][title]"] = section["title"]
+            for j, row in enumerate(section["rows"]):
+                payload[f"sections[{i}][rows][{j}][id]"] = row["id"]
+                payload[f"sections[{i}][rows][{j}][title]"] = row["title"]
+                if "description" in row:
+                    payload[f"sections[{i}][rows][{j}][description]"] = row["description"]
+
+        encoded_payload = urlencode(payload).encode('utf8').decode('iso-8859-1')
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        try:
+            response = requests.post(url, data=encoded_payload, headers=headers, verify=False)
+            response.raise_for_status()
+            logger.info(f"List message sent successfully to {to}")
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Error sending list message to {to}: {str(e)}")
+            raise
+
+    def send_multiple_messages(self, to: str, messages: list):
+        results = []
+        for message in messages:
+            if isinstance(message, dict):
+                if message['type'] == 'image':
+                    result = self.send_image_message(to, message['content']['url'], message['content'].get('caption', ''))
+                elif message['type'] == 'text':
+                    result = self.send_message(to, message['content']['text'])
+                elif message['type'] == 'button':
+                    result = self.send_button_message(
+                        to,
+                        message['content']['body'],
+                        message['content']['buttons'],
+                        header=message['content'].get('header', ''),
+                        footer=message['content'].get('footer', '')
+                    )
+                elif message['type'] == 'list':
+                    result = self.send_list_message(
+                        to,
+                        message['content']['body'],
+                        message['content']['button'],
+                        message['content']['sections'],
+                        header=message['content'].get('header', ''),
+                        footer=message['content'].get('footer', '')
+                    )
+                else:
+                    logger.warning(f"Unsupported message type: {message['type']}")
+                    continue
+            else:
+                result = self.send_message(to, message)
+            results.append(result)
+        return results
 

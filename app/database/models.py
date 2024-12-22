@@ -14,6 +14,7 @@ class User(Base):
     updated_at = Column(DateTime, onupdate=func.now())
 
     window_quotes = relationship("WindowQuote", back_populates="user")
+    flow_states = relationship("FlowState", back_populates="user")
 
 class Message(Base):
     __tablename__ = "messages"
@@ -25,7 +26,7 @@ class Message(Base):
     message_type = Column(String)
     timestamp = Column(DateTime, server_default=func.now())
 
-    multimedia_message = relationship("MultimediaMessage", back_populates="message", uselist=False)
+    multimedia_message =multimedia_message = relationship("MultimediaMessage", back_populates="message", uselist=False)
     order = relationship("Order", back_populates="message", uselist=False)
 
 class MultimediaMessage(Base):
@@ -70,11 +71,13 @@ class FlowState(Base):
     __tablename__ = "flow_states"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String, unique=True, index=True)
+    user_id = Column(String, ForeignKey('users.user_id'), unique=True, index=True)
     current_flow = Column(String, nullable=False, default="none")
     current_node = Column(String, nullable=True)
     context = Column(JSON, nullable=True)
     last_updated = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    user = relationship("User", back_populates="flow_states")
 
 class WindowQuote(Base):
     __tablename__ = "window_quotes"
@@ -103,4 +106,3 @@ class Window(Base):
     image_url = Column(String)
 
     quote = relationship("WindowQuote", back_populates="windows")
-
