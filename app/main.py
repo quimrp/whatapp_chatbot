@@ -121,12 +121,33 @@ async def webhook(request: Request, db: Session = Depends(get_db), authorization
             save_order(db, new_message, message_data)
 
         if response:
-            logger.debug(f"Attempting to send message to {sender}: {response}")
+            logger.debug(f"Attempting to send message(s) to {sender}: {response}")
             try:
-                result = alvochat_api.send_message(sender, response)
-                logger.info(f"Message sent successfully: {result}")
+                if isinstance(response, list):
+                    result = alvochat_api.send_multiple_messages(sender, response)
+                elif isinstance(response, dict) and response.get("type") == "interactive":
+                    if response["interactive"]["type"] == "button":
+                        result = alvochat_api.send_button_message(
+                            sender,
+                            response["interactive"]["body"]["text"],
+                            response["interactive"]["action"]["buttons"],
+                            header=response["interactive"].get("header", {}).get("text", ""),
+                            footer=response["interactive"].get("footer", {}).get("text", "")
+                        )
+                    elif response["interactive"]["type"] == "list":
+                        result = alvochat_api.send_list_message(
+                            sender,
+                            response["interactive"]["body"]["text"],
+                            response["interactive"]["action"]["button"],
+                            response["interactive"]["action"]["sections"],
+                            header=response["interactive"].get("header", {}).get("text", ""),
+                            footer=response["interactive"].get("footer", {}).get("text", "")
+                        )
+                else:
+                    result = alvochat_api.send_message(sender, response)
+                logger.info(f"Message(s) sent successfully: {result}")
             except Exception as e:
-                logger.error(f"Error sending message: {str(e)}")
+                logger.error(f"Error sending message(s): {str(e)}")
 
         return {"status": "success", "message": "Message processed"}
 

@@ -2,7 +2,6 @@ import requests
 import urllib3
 from app.config import settings
 import logging
-from urllib.parse import urlencode
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -16,24 +15,16 @@ class AlvoChatAPI:
         logger.info(f"AlvoChatAPI initialized with URL: {self.base_url}, Instance ID: {self.instance_id}")
 
     def _build_url(self, endpoint):
-       return f"{self.base_url}/{endpoint}"
+        return f"{self.base_url.rstrip('/')}/{endpoint}"
+
     def send_message(self, to: str, message: str, priority: str = "", preview_url: str = "", message_id: str = ""):
         url = self._build_url("messages/chat")
         logger.debug(f"Sending message to URL: {url}")
-        payload = {
-            "token": self.token,
-            "to": to,
-            "body": message,
-            "priority": priority,
-            "preview_url": preview_url,
-            "message_id": message_id
-        }
-        encoded_payload = urlencode(payload).encode('utf8').decode('iso-8859-1')
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
+        payload = f"token={self.token}&to={to}&body={message}&priority={priority}&preview_url={preview_url}&message_id={message_id}"
+        payload = payload.encode('utf8').decode('iso-8859-1')
+        headers = {'content-type': 'application/x-www-form-urlencoded'}
         try:
-            response = requests.post(url, data=encoded_payload, headers=headers, verify=False)
+            response = requests.post(url, data=payload, headers=headers, verify=False)
             response.raise_for_status()
             logger.info(f"Message sent successfully to {to}")
             return response.json()
@@ -43,20 +34,12 @@ class AlvoChatAPI:
 
     def send_image_message(self, to: str, image_url: str, caption: str = "", priority: str = "", message_id: str = ""):
         url = self._build_url("messages/image")
-        payload = {
-            "token": self.token,
-            "to": to,
-            "image": image_url,
-            "caption": caption,
-            "priority": priority,
-            "message_id": message_id
-        }
-        encoded_payload = urlencode(payload).encode('utf8').decode('iso-8859-1')
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
+        logger.debug(f"Sending image message to URL: {url}")
+        payload = f"token={self.token}&to={to}&image={image_url}&caption={caption}&priority={priority}&message_id={message_id}"
+        payload = payload.encode('utf8').decode('iso-8859-1')
+        headers = {'content-type': 'application/x-www-form-urlencoded'}
         try:
-            response = requests.post(url, data=encoded_payload, headers=headers, verify=False)
+            response = requests.post(url, data=payload, headers=headers, verify=False)
             response.raise_for_status()
             logger.info(f"Image message sent successfully to {to}")
             return response.json()
@@ -66,25 +49,13 @@ class AlvoChatAPI:
 
     def send_button_message(self, to: str, body: str, buttons: list, header: str = "", footer: str = "", priority: str = "", message_id: str = ""):
         url = self._build_url("messages/button")
-        payload = {
-            "token": self.token,
-            "to": to,
-            "header": header,
-            "body": body,
-            "footer": footer,
-            "priority": priority,
-            "message_id": message_id
-        }
-        
+        payload = f"token={self.token}&to={to}&header={header}&body={body}&footer={footer}&priority={priority}&message_id={message_id}"
         for i, button in enumerate(buttons):
-            payload[f"buttons[{i}]"] = button
-
-        encoded_payload = urlencode(payload).encode('utf8').decode('iso-8859-1')
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
+            payload += f"&buttons[{i}]={button}"
+        payload = payload.encode('utf8').decode('iso-8859-1')
+        headers = {'content-type': 'application/x-www-form-urlencoded'}
         try:
-            response = requests.post(url, data=encoded_payload, headers=headers, verify=False)
+            response = requests.post(url, data=payload, headers=headers, verify=False)
             response.raise_for_status()
             logger.info(f"Button message sent successfully to {to}")
             return response.json()
@@ -94,31 +65,17 @@ class AlvoChatAPI:
 
     def send_list_message(self, to: str, body: str, button: str, sections: list, header: str = "", footer: str = "", priority: str = "", message_id: str = ""):
         url = self._build_url("messages/list")
-        payload = {
-            "token": self.token,
-            "to": to,
-            "header": header,
-            "body": body,
-            "footer": footer,
-            "button": button,
-            "priority": priority,
-            "message_id": message_id
-        }
-        
+        payload = f"token={self.token}&to={to}&header={header}&body={body}&footer={footer}&button={button}&priority={priority}&message_id={message_id}"
         for i, section in enumerate(sections):
-            payload[f"sections[{i}][title]"] = section["title"]
-            for j, row in enumerate(section["rows"]):
-                payload[f"sections[{i}][rows][{j}][id]"] = row["id"]
-                payload[f"sections[{i}][rows][{j}][title]"] = row["title"]
+            payload += f"&sections[{i}][title]={section['title']}"
+            for j, row in enumerate(section['rows']):
+                payload += f"&sections[{i}][rows][{j}][id]={row['id']}&sections[{i}][rows][{j}][title]={row['title']}"
                 if "description" in row:
-                    payload[f"sections[{i}][rows][{j}][description]"] = row["description"]
-
-        encoded_payload = urlencode(payload).encode('utf8').decode('iso-8859-1')
-        headers = {
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
+                    payload += f"&sections[{i}][rows][{j}][description]={row['description']}"
+        payload = payload.encode('utf8').decode('iso-8859-1')
+        headers = {'content-type': 'application/x-www-form-urlencoded'}
         try:
-            response = requests.post(url, data=encoded_payload, headers=headers, verify=False)
+            response = requests.post(url, data=payload, headers=headers, verify=False)
             response.raise_for_status()
             logger.info(f"List message sent successfully to {to}")
             return response.json()
@@ -131,7 +88,11 @@ class AlvoChatAPI:
         for message in messages:
             if isinstance(message, dict):
                 if message['type'] == 'image':
-                    result = self.send_image_message(to, message['content']['url'], message['content'].get('caption', ''))
+                    result = self.send_image_message(
+                        to, 
+                        message['content']['url'], 
+                        caption=message['content'].get('caption', '')
+                    )
                 elif message['type'] == 'text':
                     result = self.send_message(to, message['content']['text'])
                 elif message['type'] == 'button':
@@ -157,5 +118,8 @@ class AlvoChatAPI:
             else:
                 result = self.send_message(to, message)
             results.append(result)
+            logger.info(f"Message of type {message['type'] if isinstance(message, dict) else 'text'} sent successfully")
         return results
+
+
 

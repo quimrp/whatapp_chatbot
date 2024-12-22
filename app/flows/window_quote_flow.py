@@ -6,7 +6,7 @@ def create_window_quote_flow():
     return (FlowBuilder("window_quote", ["presupuesto", "ventana", "ventanas", "cotización", "cotizar"])
         .add_multi_message_node("start", [
             {"type": "image", "content": {
-                "url": "https://example.com/images/window_quote_banner.jpg",
+                "url": "https://www.sevillanadepvc.es/wp-content/uploads/2023/08/ventanas-de-aluminio-a-medida.jpg",
                 "caption": "Bienvenido al asistente de presupuestos de ventanas"
             }},
             {"type": "text", "content": {"text": "Bienvenido al asistente de presupuestos de ventanas. Vamos a comenzar con la primera ventana."}},
