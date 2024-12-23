@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional, Callable, List, Union
+from typing import Dict, Any, Optional, Callable, List, Union, Tuple
 
 class ConversationNode:
     def __init__(self, node_type: str, content: Union[Dict[str, Any], List[Dict[str, Any]]]):
@@ -9,11 +9,12 @@ class ConversationNode:
     def to_alvochat_format(self) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         return self.content
 
-    def get_next_node(self, user_response: str) -> Optional[str]:
+    def get_next_node(self, user_response: str) -> Tuple[Optional[str], Optional[str]]:
         for jump in self.jumps:
             if jump["condition"](user_response):
-                return jump["target"]
-        return None
+                return jump["target"], None
+        # If no condition is met, return the first jump's target and its error message
+        return self.jumps[0]["target"], self.jumps[0].get("error_message") if self.jumps else (None, None)
 
 class FlowBuilder:
     def __init__(self, name: str, keywords: List[str]):
@@ -40,26 +41,22 @@ class FlowBuilder:
             "action": {"buttons": buttons}
         })
 
-    def add_interactive_list_node(self, node_name: str, text: str, button_text: str, sections: List[Dict[str, Any]]) -> 'FlowBuilder':
+    def add_interactive_list_node(self, node_name: str, content: dict) -> 'FlowBuilder':
         return self.add_node(node_name, "interactive", {
             "type": "list",
-            "body": {"text": text},
-            "action": {
-                "button": button_text,
-                "sections": sections
-            }
+            "interactive": content
         })
 
     def add_multi_message_node(self, node_name: str, messages: List[Dict[str, Any]]) -> 'FlowBuilder':
         return self.add_node(node_name, "multi_message", messages)
 
-    def add_jump(self, source: str, target: str, condition: Callable[[str], bool] = lambda _: True) -> 'FlowBuilder':
+    def add_jump(self, source: str, target: str, condition: Callable[[str], bool] = lambda _: True, error_message: Optional[str] = None) -> 'FlowBuilder':
         if source not in self.nodes:
             raise ValueError(f"Source node '{source}' does not exist")
         if target not in self.nodes:
             raise ValueError(f"Target node '{target}' does not exist")
         
-        self.nodes[source].jumps.append({"target": target, "condition": condition})
+        self.nodes[source].jumps.append({"target": target, "condition": condition, "error_message": error_message})
         return self
 
     def build(self) -> 'ConversationFlow':
@@ -81,7 +78,7 @@ class ConversationFlow:
         if not node:
             return None, "Lo siento, no puedo procesar tu mensaje en este momento."
         
-        next_node = node.get_next_node(message_data.get("body", ""))
+        next_node, error_message = node.get_next_node(message_data.get("body", ""))
         
         if node.node_type == "multi_message":
             return next_node, node.content

@@ -46,6 +46,7 @@ async def webhook(request: Request, db: Session = Depends(get_db), authorization
 
         user = get_or_create_user(db, sender)
         flow_state = get_or_create_flow_state(db, sender)
+        logger.debug(f"Current flow state before processing: {flow_state.current_flow}, {flow_state.current_node}")
 
         next_node = None
         response = ""
@@ -79,6 +80,10 @@ async def webhook(request: Request, db: Session = Depends(get_db), authorization
 
             if flow_state.current_flow == "window_quote":
                 update_window_quote_context(flow_state, next_node, message_data)
+                if message_data.get("type") == "image" and next_node == "ask_image":
+                    flow = get_flow(flow_state.current_flow)
+                    next_node, response = flow.process_message("ask_color", message_data, flow_state.context)
+                    flow_state.current_node = next_node
 
         if next_node == "end" and flow_state.current_flow == "window_quote":
             summary = generate_quote_summary(flow_state.context)
@@ -121,9 +126,10 @@ async def webhook(request: Request, db: Session = Depends(get_db), authorization
             save_order(db, new_message, message_data)
 
         if response:
-            logger.debug(f"Attempting to send message(s) to {sender}: {response}")
+            logger.debug(f"Attempting to send message(s) to {sender}: {json.dumps(response, indent=2)}")
             try:
                 if isinstance(response, list):
+                    logger.debug("Sending multiple messages")
                     result = alvochat_api.send_multiple_messages(sender, response)
                 elif isinstance(response, dict) and response.get("type") == "interactive":
                     if response["interactive"]["type"] == "button":
@@ -135,15 +141,17 @@ async def webhook(request: Request, db: Session = Depends(get_db), authorization
                             footer=response["interactive"].get("footer", {}).get("text", "")
                         )
                     elif response["interactive"]["type"] == "list":
+                        logger.debug(f"Sending list message: {json.dumps(response, indent=2)}")
                         result = alvochat_api.send_list_message(
                             sender,
-                            response["interactive"]["body"]["text"],
-                            response["interactive"]["action"]["button"],
-                            response["interactive"]["action"]["sections"],
-                            header=response["interactive"].get("header", {}).get("text", ""),
-                            footer=response["interactive"].get("footer", {}).get("text", "")
+                            response["body"]["text"],
+                            response["action"]["button"],
+                            response["action"]["sections"],
+                            header=response.get("header", {}).get("text", ""),
+                            footer=response.get("footer", {}).get("text", "")
                         )
                 else:
+                    logger.debug("Sending simple text message")
                     result = alvochat_api.send_message(sender, response)
                 logger.info(f"Message(s) sent successfully: {result}")
             except Exception as e:
@@ -184,25 +192,41 @@ def update_window_quote_context(flow_state: FlowState, current_node: str, messag
     if "current_window" not in flow_state.context:
         flow_state.context["current_window"] = {}
 
-    if current_node == "ask_width":
-        flow_state.context["current_window"]["reference"] = message_data.get("body")
+    message_type = message_data.get("type")
+    body = message_data.get("body")
+
+    if current_node == "start":
+        flow_state.context["current_window"]["reference"] = body
+    elif current_node == "ask_width":
+        try:
+            flow_state.context["current_window"]["width"] = float(body)
+        except ValueError:
+            flow_state.context["current_window"]["width"] = body
     elif current_node == "ask_height":
-        flow_state.context["current_window"]["width"] = float(message_data.get("body"))
+        try:
+            flow_state.context["current_window"]["height"] = float(body)
+        except ValueError:
+            flow_state.context["current_window"]["height"] = body
     elif current_node == "ask_image":
-        flow_state.context["current_window"]["height"] = float(message_data.get("body"))
-        if message_data.get("type") == "image":
-            flow_state.context["current_window"]["image"] = message_data.get("image", {}).get("link")
+        if message_type == "image":
+            flow_state.context["current_window"]["image"] = message_data.get("media", {}).get("link")
+        elif body.lower() == "no tengo":
+            flow_state.context["current_window"]["image"] = "No proporcionada"
+    elif current_node == "ask_color":
+        list_reply = message_data.get("interactive", {}).get("list_reply", {})
+        flow_state.context["current_window"]["color"] = list_reply.get("id") if list_reply else None
     elif current_node == "ask_blind":
-        flow_state.context["current_window"]["color"] = message_data.get("body")
+        flow_state.context["current_window"]["has_blind"] = body.lower() == "sí"
     elif current_node == "ask_motor":
-        flow_state.context["current_window"]["has_blind"] = message_data.get("body").lower() == "sí"
+        flow_state.context["current_window"]["motorized_blind"] = body.lower() == "sí"
     elif current_node == "ask_opening":
-        flow_state.context["current_window"]["motorized_blind"] = message_data.get("body").lower() == "sí"
+        flow_state.context["current_window"]["opening_type"] = message_data.get("interactive", {}).get("list_reply", {}).get("id")
     elif current_node == "ask_another":
-        flow_state.context["current_window"]["opening_type"] = message_data.get("body")
         if "windows" not in flow_state.context:
             flow_state.context["windows"] = []
         flow_state.context["windows"].append(flow_state.context.pop("current_window", {}))
+
+    logger.debug(f"Updated context for node {current_node}: {flow_state.context}")
 
 def generate_quote_summary(context: dict) -> str:
     windows = context.get("windows", [])
@@ -279,4 +303,5 @@ def save_order(db: Session, message: Message, message_data: dict):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 

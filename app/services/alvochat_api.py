@@ -1,7 +1,9 @@
 import requests
 import urllib3
+import urllib.parse
 from app.config import settings
 import logging
+import json
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -65,22 +67,40 @@ class AlvoChatAPI:
 
     def send_list_message(self, to: str, body: str, button: str, sections: list, header: str = "", footer: str = "", priority: str = "", message_id: str = ""):
         url = self._build_url("messages/list")
-        payload = f"token={self.token}&to={to}&header={header}&body={body}&footer={footer}&button={button}&priority={priority}&message_id={message_id}"
-        for i, section in enumerate(sections):
-            payload += f"&sections[{i}][title]={section['title']}"
-            for j, row in enumerate(section['rows']):
-                payload += f"&sections[{i}][rows][{j}][id]={row['id']}&sections[{i}][rows][{j}][title]={row['title']}"
-                if "description" in row:
-                    payload += f"&sections[{i}][rows][{j}][description]={row['description']}"
-        payload = payload.encode('utf8').decode('iso-8859-1')
+        logger.debug(f"Sending list message to URL: {url}")
+
+        payload = {
+            "token": self.token,
+            "to": to,
+            "body": body,
+            "button": button,
+            "sections": json.dumps(sections)
+        }
+
+        if header:
+            payload["header"] = header
+        if footer:
+            payload["footer"] = footer
+        if priority:
+            payload["priority"] = priority
+        if message_id:
+            payload["message_id"] = message_id
+
+        encoded_payload = urllib.parse.urlencode(payload)
+        encoded_payload = encoded_payload.encode('utf8').decode('iso-8859-1')
         headers = {'content-type': 'application/x-www-form-urlencoded'}
+
+        logger.debug(f"Sending list message with payload: {encoded_payload}")
+
         try:
-            response = requests.post(url, data=payload, headers=headers, verify=False)
+            response = requests.post(url, data=encoded_payload, headers=headers, verify=False)
             response.raise_for_status()
             logger.info(f"List message sent successfully to {to}")
+            logger.debug(f"Response from AlvoChat API: {response.text}")
             return response.json()
         except requests.RequestException as e:
             logger.error(f"Error sending list message to {to}: {str(e)}")
+            logger.error(f"Response content: {e.response.content if e.response else 'No response'}")
             raise
 
     def send_multiple_messages(self, to: str, messages: list):
@@ -120,6 +140,7 @@ class AlvoChatAPI:
             results.append(result)
             logger.info(f"Message of type {message['type'] if isinstance(message, dict) else 'text'} sent successfully")
         return results
+
 
 
 
